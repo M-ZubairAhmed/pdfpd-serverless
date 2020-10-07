@@ -5,6 +5,10 @@ const fs = require('fs')
 const Busboy = require('busboy')
 const sanitize = require('sanitize-filename')
 const pdfjs = require('pdfjs-dist/es5/build/pdf')
+const firebaseAdmin = require('firebase-admin')
+
+firebaseAdmin.initializeApp()
+const firebaseDB = firebaseAdmin.firestore()
 
 exports.upload = functions.https.onRequest((request, response) => {
   // Add CORS header
@@ -115,13 +119,21 @@ exports.upload = functions.https.onRequest((request, response) => {
         // since we are using async in for loop, we are waiting for all of the pdf text extractions
         // to be completed before we get out final text
         const pdfFileTextInArray = await Promise.all(fileInPDFParsedPromises)
-        const pdfFileText = pdfFileTextInArray.join(' ')
-
-        // delete the file saved temporarily disk, since we dont need it now
-        fs.unlinkSync(fileSavePath)
+        const fileText = pdfFileTextInArray.join(' ')
 
         const currentDateTime = new Date()
         const completedAt = currentDateTime.toISOString()
+
+        const pdfFileRef = firebaseDB.collection('pdfs').doc(fileName)
+        await pdfFileRef.set({
+          userID,
+          completedAt,
+          fileName,
+          fileText,
+        })
+
+        // delete the file saved temporarily disk, since we dont need it now
+        fs.unlinkSync(fileSavePath)
 
         response.status(201)
         response
