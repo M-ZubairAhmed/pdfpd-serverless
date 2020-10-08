@@ -121,10 +121,9 @@ exports.upload = functions.https.onRequest((request, response) => {
         const pdfFileTextInArray = await Promise.all(fileInPDFParsedPromises)
         const fileText = pdfFileTextInArray.join(' ')
 
-        const currentDateTime = new Date()
-        const completedAt = currentDateTime.toISOString()
+        const completedAt = firebaseAdmin.firestore.FieldValue.serverTimestamp()
 
-        const pdfFileRef = firebaseDB.collection('pdfs').doc(fileName)
+        const pdfFileRef = firebaseDB.collection(userID).doc(fileName)
         await pdfFileRef.set({
           userID,
           completedAt,
@@ -141,7 +140,6 @@ exports.upload = functions.https.onRequest((request, response) => {
             data: {
               fileName,
               userID,
-              completedAt,
             },
             successMessage: 'File processed successfully',
             successCode: 'pf-201-1',
