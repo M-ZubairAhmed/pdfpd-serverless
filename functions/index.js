@@ -12,7 +12,7 @@ const firebaseDB = firebaseAdmin.firestore()
 
 exports.upload = functions.https.onRequest((request, response) => {
   // Add CORS header
-  response.setHeader('Access-Control-Allow-Origin', 'http://localhost:8000')
+  response.setHeader('Access-Control-Allow-Origin', 'https://pdfdp.netlify.app')
 
   // Handle preflight request
   // send no content status for preflight requests
@@ -25,7 +25,13 @@ exports.upload = functions.https.onRequest((request, response) => {
   } else {
     // Return method not allowed error for non post methods
     if (request.method.toLowerCase() !== 'post') {
-      response.status(405).end()
+      response.status(405)
+      response
+        .send({
+          data: {},
+          message: 'Invalid method',
+        })
+        .end()
       return
     }
 
@@ -34,7 +40,13 @@ exports.upload = functions.https.onRequest((request, response) => {
       `${request.header('Content-Type')}`.includes('multipart/form-data') !==
       true
     ) {
-      response.status(400).end()
+      response.status(415)
+      response
+        .send({
+          data: {},
+          message: 'Invalid content-type',
+        })
+        .end()
       return
     }
 
@@ -46,20 +58,46 @@ exports.upload = functions.https.onRequest((request, response) => {
         : ''
     // Return request if no user id is present
     if (userID.length === 0) {
-      response.status(401).end()
+      response.status(401)
+      response
+        .send({
+          data: {},
+          message: 'Missing user ID',
+        })
+        .end()
       return
     }
 
-    const busboy = new Busboy({ headers: request.headers })
+    // 10 mb limit since gcp larger size will time out since we are temp storing in memory
+    // instead of external data storage
+    const TEN_MEGA_BYTES = 10 * 1024 * 1024
+
+    const busboy = new Busboy({
+      headers: request.headers,
+      limits: { fileSize: TEN_MEGA_BYTES },
+    })
 
     let fileWritesPromise = []
     let fileSavePath = ''
     let fileName = ''
+    let fileID = ''
 
     // Runs on each file when uploaded
-    busboy.on('file', (fieldName, file, unsafeFileName) => {
+    busboy.on('file', (fieldName, file, unsafeFileName, encoding, mimetype) => {
       // Treating all file name coming from client as unsafe and sanitizing it
       fileName = sanitize(unsafeFileName)
+      fileID = fieldName
+
+      if (mimetype !== 'application/pdf') {
+        response.status(400)
+        response
+          .send({
+            data: {},
+            message: 'Invalid PDF',
+          })
+          .end()
+        return
+      }
 
       // This temp file location will be Google cloud
       fileSavePath = path.join(os.tmpdir(), fileName)
@@ -121,13 +159,19 @@ exports.upload = functions.https.onRequest((request, response) => {
         const pdfFileTextInArray = await Promise.all(fileInPDFParsedPromises)
         const fileText = pdfFileTextInArray.join(' ')
 
+        // No resultant parsed text
+        if (fileText.trim().length === 0) {
+          throw new Error('Text empty')
+        }
+
         const completedAt = firebaseAdmin.firestore.FieldValue.serverTimestamp()
 
         const pdfFileRef = firebaseDB.collection(userID).doc(fileName)
         await pdfFileRef.set({
+          fileID: fileID,
+          fileName,
           userID,
           completedAt,
-          fileName,
           fileText,
         })
 
@@ -141,13 +185,18 @@ exports.upload = functions.https.onRequest((request, response) => {
               fileName,
               userID,
             },
-            successMessage: 'File processed successfully',
-            successCode: 'pf-201-1',
+            message: 'File processed successfully',
           })
           .end()
       } catch (err) {
-        console.error(err)
-        response.status(500).end()
+        functions.logger.warn('err in processing', err)
+        response.status(500)
+        response
+          .send({
+            data: {},
+            message: 'Processing failed',
+          })
+          .end()
       }
     })
 
